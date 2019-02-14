@@ -1,0 +1,123 @@
+#
+# PX4 ROS development environment
+#
+
+FROM px4io/px4-dev-base-xenial:pr-base-ubuntu16
+LABEL maintainer="Daniel Agar <daniel@agar.ca>"
+
+ENV DEBIAN_FRONTEND noninteractive
+ENV ROS_DISTRO kinetic
+
+RUN apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-key 421C365BD9FF1F717815A3895523BAEEB01FA116 \
+	&& sh -c 'echo "deb http://packages.ros.org/ros/ubuntu `lsb_release -sc` main" > /etc/apt/sources.list.d/ros-latest.list' \
+	&& sh -c 'echo "deb http://packages.ros.org/ros-shadow-fixed/ubuntu `lsb_release -sc` main" > /etc/apt/sources.list.d/ros-shadow.list' \
+	&& sh -c 'echo "deb http://packages.osrfoundation.org/gazebo/ubuntu-stable `lsb_release -cs` main" > /etc/apt/sources.list.d/gazebo-stable.list' \
+	&& wget http://packages.osrfoundation.org/gazebo.key -O - | apt-key add - \
+	&& apt-get update \
+	&& apt-get -y --quiet --no-install-recommends install \
+		geographiclib-tools \
+		libeigen3-dev \
+		libgeographic-dev \
+		libopencv-dev \
+		protobuf-compiler \
+		python-catkin-tools \
+		python-tk \
+		python3-pip \
+		ros-$ROS_DISTRO-gazebo-ros-pkgs \
+		ros-$ROS_DISTRO-mavlink \
+		ros-$ROS_DISTRO-mavros \
+		ros-$ROS_DISTRO-mavros-extras \
+		ros-$ROS_DISTRO-pcl-conversions \
+		ros-$ROS_DISTRO-pcl-msgs \
+		ros-$ROS_DISTRO-pcl-ros \
+		ros-$ROS_DISTRO-ros-base \
+		ros-$ROS_DISTRO-rostest \
+		ros-$ROS_DISTRO-rosunit \
+		ros-$ROS_DISTRO-xacro \		
+		xvfb \
+		python-wstool \
+		python-catkin-tools \
+		python-$ROS_DISTRO-cmake-modules \
+		libyam-cpp-dev \
+	&& geographiclib-get-geoids egm96-5 \
+	&& apt-get -y autoremove \
+	&& apt-get clean autoclean \
+	# pip
+	&& pip install --upgrade numpy px4tools pymavlink \
+	&& pip3 install --upgrade setuptools wheel \
+	&& pip3 install --upgrade pyulog matplotlib \
+	&& rm -rf /var/lib/apt/lists/{apt,dpkg,cache,log} /tmp/* /var/tmp/*
+
+RUN rosdep init && rosdep update
+
+# create and start as LOCAL_USER_ID
+COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+
+CMD ["/bin/bash"]
+
+
+
+# Dockerfile_simulation stuff
+
+RUN wget --quiet http://packages.osrfoundation.org/gazebo.key -O - | apt-key add - \
+	&& sh -c 'echo "deb http://packages.osrfoundation.org/gazebo/ubuntu-stable `lsb_release -sc` main" > /etc/apt/sources.list.d/gazebo-stable.list' \
+	&& apt-get update \
+	&& DEBIAN_FRONTEND=noninteractive apt-get -y --quiet --no-install-recommends install \
+		ant \
+		gazebo9 \
+		gstreamer1.0-plugins-bad \
+		gstreamer1.0-plugins-base \
+		gstreamer1.0-plugins-good \
+		gstreamer1.0-plugins-ugly \
+		libeigen3-dev \
+		libgazebo9-dev \
+		libgstreamer-plugins-base1.0-dev \
+		libimage-exiftool-perl \
+		libopencv-dev \
+		libxml2-utils \
+		pkg-config \
+		protobuf-compiler \
+	&& apt-get -y autoremove \
+	&& apt-get clean autoclean \
+	&& rm -rf /var/lib/apt/lists/{apt,dpkg,cache,log} /tmp/* /var/tmp/*
+
+# install MAVLink headers
+RUN git clone --depth 1 https://github.com/mavlink/c_library_v2.git /usr/local/include/mavlink/v2.0 && rm -rf /usr/local/include/mavlink/v2.0/.git
+
+# Some QT-Apps/Gazebo don't not show controls without this
+ENV QT_X11_NO_MITSHM 1
+
+# Gazebo 7 crashes on VM with OpenGL 3.3 support, so downgrade to OpenGL 2.1
+# http://answers.gazebosim.org/question/13214/virtual-machine-not-launching-gazebo/
+# https://www.mesa3d.org/vmware-guest.html
+ENV SVGA_VGPU10 0
+
+# Use UTF8 encoding in java tools (needed to compile jMAVSim)
+ENV JAVA_TOOL_OPTIONS=-Dfile.encoding=UTF8
+
+
+
+# setup workspace and git my code
+
+RUN mkdir ~p ~/bcatkin_ws/src \
+    	     && cd ~\bcatkin_ws/src \
+	     && catkin init \
+	     && catkin config --extend /opt/ros/$ROS_DISTRO \
+	     && catkin config --cmake-args -DCMAKE_BUILD_TYPE=Release
+	     && catkin config --merge-devel \
+
+	     && cd src \
+	     && wstool init \
+	     && wstool set --git mav_trajectory_generation git@github.com:ethz-asl/mav_trajectory_generation.git -y \
+	     && wstool update \
+	     && wstool merge mav_trajectory_generation/install/mav_trajectory_generation_https.rosinstall \
+	     && wstool update -j8 \
+	     && echo "source ~/bcatkin_ws/devel/setup.bash" >> ~/.bashrc \
+	     && source ~/.bashrc
+
+RUN catkin build mav_trajectory_generation_ros
+	     
+
+	     
+
